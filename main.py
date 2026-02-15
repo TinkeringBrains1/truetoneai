@@ -1,6 +1,3 @@
-import static_ffmpeg
-static_ffmpeg.add_paths()  # Forces system to use the portable FFmpeg
-
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,8 +10,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import librosa
-import scipy.signal as signal  # <--- Added for Bandpass Filter
-from pydub import AudioSegment
+import scipy.signal as signal
 from transformers import Wav2Vec2Model
 from huggingface_hub import hf_hub_download
 
@@ -103,11 +99,12 @@ except Exception as e:
     print(f"❌ Error loading model: {e}")
 
 # ==========================================
-# 4. PREPROCESSING HELPER
+# 4. PREPROCESSING HELPER (Tri-Series)
 # ==========================================
 def preprocess_tri_series(wav, sr=16000):
     """
-    Applies: Resample (already done on load) -> Bandpass -> Normalize
+    Applies: Bandpass Filter (70Hz-8kHz) -> Z-Score Normalization
+    (Resampling is handled during load)
     """
     # 1. Bandpass Filter (70Hz - 7999Hz)
     if len(wav) > 0:
@@ -128,10 +125,9 @@ def preprocess_tri_series(wav, sr=16000):
 
 @app.get("/")
 def home():
-    return {"status": "online"}
+    return {"status": "online", "message": "Accepting .wav and .mp3 only"}
 
 class AudioRequest(BaseModel):
-    # Removed 'language' field as it's not used in response
     audioBase64: str
 
 @app.post("/api/voice-detection")
@@ -148,26 +144,13 @@ async def detect_voice(req: AudioRequest, x_api_key: str = Header(None)):
         except Exception:
             return {"status": "error", "message": "Invalid Base64"}
 
-        # 2. Load MP4 -> WAV -> Numpy (16kHz)
+        # 2. Direct Load (WAV/MP3) -> Numpy (16kHz)
         try:
-            # Pydub handles the MP4 container automatically
-            audio_segment = AudioSegment.from_file(io.BytesIO(audio_bytes), format="mp4")
-            
-            # Convert to standard WAV buffer for Librosa
-            wav_io = io.BytesIO()
-            audio_segment.export(wav_io, format="wav")
-            wav_io.seek(0)
-            
-            # Load into Numpy
-            wav, sr = librosa.load(wav_io, sr=16000)
-            
-            # Ensure Mono
-            if len(wav.shape) > 1:
-                wav = np.mean(wav, axis=1)
-
+            # Librosa loads directly from memory buffer
+            wav, sr = librosa.load(io.BytesIO(audio_bytes), sr=16000, mono=True)
         except Exception as e:
             print(f"Audio Load Error: {e}")
-            return {"status": "error", "message": "Could not process MP4 file"}
+            return {"status": "error", "message": "Invalid audio format. Use WAV or MP3."}
 
         # 3. Apply Tri-Series Preprocessing
         wav = preprocess_tri_series(wav)
