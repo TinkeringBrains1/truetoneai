@@ -29,7 +29,7 @@ except Exception as e:
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Get API Key from Environment Variable
+# Get API Key
 SECRET_KEY = os.getenv("API_KEY") 
 if not SECRET_KEY:
     print("⚠️ WARNING: API_KEY not found in environment variables!")
@@ -79,6 +79,15 @@ class VoiceDetector(nn.Module):
 # ==========================================
 app = FastAPI()
 
+# ENABLE CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 print(f"⏳ Loading Model onto {DEVICE}...")
 model = VoiceDetector().to(DEVICE)
 
@@ -91,21 +100,18 @@ except Exception as e:
     print(f"❌ Error loading model: {e}")
 
 # ==========================================
-# 4. PREPROCESSING HELPER (Tri-Series)
+# 4. PREPROCESSING HELPER
 # ==========================================
 def preprocess_tri_series(wav, sr=16000):
     """
     Applies: Bandpass Filter (70Hz-8kHz) -> Z-Score Normalization
-    (Resampling is handled during load)
     """
-    # 1. Bandpass Filter (70Hz - 7999Hz)
-    #    Removes low rumble and high aliasing noise
+    # 1. Bandpass Filter
     if len(wav) > 0:
         sos = signal.butter(6, [70, 7999], btype='bandpass', fs=sr, output='sos')
         wav = signal.sosfilt(sos, wav)
 
     # 2. Z-Score Normalization
-    #    Standardizes amplitude
     if len(wav) > 0:
         mean = np.mean(wav)
         std = np.std(wav) + 1e-9
@@ -126,7 +132,6 @@ def home():
 
 class AudioRequest(BaseModel):
     audioBase64: str
-    # Removed language and format fields as they are not used
 
 @app.post("/api/voice-detection")
 async def detect_voice(req: AudioRequest, x_api_key: str = Header(None)):
@@ -140,11 +145,10 @@ async def detect_voice(req: AudioRequest, x_api_key: str = Header(None)):
             if "base64," in req.audioBase64:
                 req.audioBase64 = req.audioBase64.split("base64,")[1]
             audio_bytes = base64.b64decode(req.audioBase64)
-        except Exception as e:
+        except Exception:
             return {"status": "error", "message": "Invalid Base64 string"}
 
         # 3. Direct Load (WAV/MP3 only)
-        #    Librosa handles loading directly from memory bytes
         try:
             wav, sr = librosa.load(io.BytesIO(audio_bytes), sr=16000, mono=True)
         except Exception as e:
@@ -154,34 +158,22 @@ async def detect_voice(req: AudioRequest, x_api_key: str = Header(None)):
         # 4. Apply Tri-Series Preprocessing
         wav = preprocess_tri_series(wav)
 
-        # 5. Run 2-Way TTA (Original + Noisy)
+        # 5. Inference (Single Pass - No TTA)
+        tensor_wav = torch.tensor(wav, dtype=torch.float32).unsqueeze(0).to(DEVICE)
         
-        # --- Pass 1: Original ---
-        tensor_orig = torch.tensor(wav, dtype=torch.float32).unsqueeze(0).to(DEVICE)
         with torch.no_grad():
-            logits_orig = model(tensor_orig)
-            probs_orig = torch.softmax(logits_orig, dim=1)
-            score_orig = probs_orig[0][1].item() # Index 1 = AI Score
+            logits = model(tensor_wav)
+            probs = torch.softmax(logits, dim=1)
+            
+            human_score = probs[0][0].item()
+            ai_score = probs[0][1].item() # Index 1 = AI Score
 
-        # --- Pass 2: Noisy (Robustness) ---
-        noise = np.random.normal(0, 0.005, wav.shape)
-        wav_noisy = wav + noise
-        tensor_noisy = torch.tensor(wav_noisy, dtype=torch.float32).unsqueeze(0).to(DEVICE)
-        with torch.no_grad():
-            logits_noisy = model(tensor_noisy)
-            probs_noisy = torch.softmax(logits_noisy, dim=1)
-            score_noisy = probs_noisy[0][1].item()
-
-        # 6. Average Results
-        final_ai_score = (score_orig + score_noisy) / 2.0
-        final_human_score = 1.0 - final_ai_score
-
-        # 7. Classification Logic
-        is_ai = final_ai_score > 0.50
+        # 6. Classification Logic
+        is_ai = ai_score > 0.50
         classification = "AI_GENERATED" if is_ai else "HUMAN"
-        confidence = final_ai_score if is_ai else final_human_score
+        confidence = ai_score if is_ai else human_score
 
-        # 8. Return Strictly Filtered Response
+        # 7. Return Strictly Filtered Response
         return {
             "status": "success",
             "classification": classification,
