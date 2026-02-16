@@ -10,7 +10,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import librosa
-import scipy.signal as signal
 from transformers import Wav2Vec2Model
 from huggingface_hub import hf_hub_download
 
@@ -29,7 +28,7 @@ except Exception as e:
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Get API Key
+# Get API Key from Environment Variable
 SECRET_KEY = os.getenv("API_KEY") 
 if not SECRET_KEY:
     print("⚠️ WARNING: API_KEY not found in environment variables!")
@@ -100,23 +99,17 @@ except Exception as e:
     print(f"❌ Error loading model: {e}")
 
 # ==========================================
-# 4. PREPROCESSING HELPER
+# 4. PREPROCESSING HELPER (Basic)
 # ==========================================
-def preprocess_tri_series(wav, sr=16000):
+def preprocess_basic(wav):
     """
-    Applies: Bandpass Filter (70Hz-8kHz) -> Z-Score Normalization
+    Applies strict Z-Score Normalization.
+    (Resampling to 16k happens during load)
     """
-    # 1. Bandpass Filter
-    if len(wav) > 0:
-        sos = signal.butter(6, [70, 7999], btype='bandpass', fs=sr, output='sos')
-        wav = signal.sosfilt(sos, wav)
-
-    # 2. Z-Score Normalization
     if len(wav) > 0:
         mean = np.mean(wav)
         std = np.std(wav) + 1e-9
         wav = (wav - mean) / std
-        
     return wav
 
 # ==========================================
@@ -155,10 +148,10 @@ async def detect_voice(req: AudioRequest, x_api_key: str = Header(None)):
             print(f"Audio Load Error: {e}")
             return {"status": "error", "message": "Invalid audio format. Please use WAV or MP3."}
 
-        # 4. Apply Tri-Series Preprocessing
-        wav = preprocess_tri_series(wav)
+        # 4. Basic Preprocessing (Normalize only)
+        wav = preprocess_basic(wav)
 
-        # 5. Inference (Single Pass - No TTA)
+        # 5. Inference
         tensor_wav = torch.tensor(wav, dtype=torch.float32).unsqueeze(0).to(DEVICE)
         
         with torch.no_grad():
