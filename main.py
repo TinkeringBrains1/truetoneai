@@ -62,7 +62,7 @@ class AASIST_Backend(nn.Module):
 class VoiceDetector(nn.Module):
     def __init__(self):
         super().__init__()
-        print("🌍 Initializing MMS-300M Backbone...")
+        print("Initializing MMS-300M Backbone...")
         self.backbone = Wav2Vec2Model.from_pretrained("facebook/mms-300m")
         self.proj = nn.Linear(1024, 128) 
         self.backend = AASIST_Backend()
@@ -94,9 +94,9 @@ try:
     state_dict = torch.load(MODEL_PATH, map_location=DEVICE)
     model.load_state_dict(state_dict)
     model.eval()
-    print("✅ Model Loaded Successfully!")
+    print("Model Loaded Successfully!")
 except Exception as e:
-    print(f"❌ Error loading model: {e}")
+    print(f"Error loading model: {e}")
 
 # ==========================================
 # 4. PREPROCESSING HELPER
@@ -201,3 +201,4 @@ async def detect_voice(req: AudioRequest, x_api_key: str = Header(None)):
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=7860)
+
