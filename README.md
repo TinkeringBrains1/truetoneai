@@ -200,8 +200,6 @@ Classification values:
 ------------------------------------------------------------------------
 
 ## Project Structure
-
-    .
     ├── main.py
     ├── model/
     ├── utils/
@@ -258,3 +256,4 @@ MIT License
 ## Author
 
 Developed with care for AI Security & Fraud Prevention.
+
